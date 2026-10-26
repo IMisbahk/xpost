@@ -1,0 +1,30 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Local xpost config and data (never commit)
+.config/
+.local/
+xpost-home/
+**/config
+**/approver.json
+**/approval-store.json
+**/drafts/
+**/audit.jsonl
+**/schedule.json
+**/state.json
+**/posted-hashes.json
+**/lock
+*.pid
+
+# Secrets and credentials
+**/credentials*
+**/*secret*
+**/*token*
+!scripts/checkSecrets.ts
+agent-tools/
