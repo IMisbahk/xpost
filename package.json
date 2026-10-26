@@ -1,0 +1,45 @@
+{
+  "name": "xpost",
+  "version": "1.0.0",
+  "description": "Human-approved CLI for posting to X (@mmisbbahh)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "xpost": "./bin/xpost.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit && node --import tsx scripts/checkNoEmDash.ts && node --import tsx scripts/checkSecrets.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:secrets": "node --import tsx scripts/checkSecrets.ts",
+    "prepublishOnly": "npm run build && npm test",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "x",
+    "twitter",
+    "cli",
+    "post",
+    "approval"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
