@@ -174,14 +174,38 @@ export async function runCli(argv: string[]): Promise<void> {
 
   program
     .command("approve")
-    .description("Owner-only interactive approval (TTY + passphrase)")
-    .argument("[id]", "Draft id (omit when using --batch)")
-    .option("--batch <batchId>", "Approve every member of a batch in one passphrase step")
+    .description(
+      "Approve a draft or batch: TTY+passphrase (default) or chat quote (--chat, non-interactive)"
+    )
+    .argument("[id]", "Draft id (omit when using --batch or --chat)")
+    .option("--batch <batchId>", "Approve every member of a batch in one passphrase step (TTY)")
+    .option(
+      "--chat <draftOrBatchId>",
+      "Chat approval mode: non-interactive; bind owner's exact yes via --quote"
+    )
+    .option(
+      "--quote <text>",
+      "Owner's exact yes message (required with --chat; stored verbatim)"
+    )
+    .option(
+      "--confirm-hash <prefix>",
+      "Optional: first 8+ chars of a text sha256 being approved (recommended)"
+    )
+    .option(
+      "--yes-hash <prefix>",
+      "Alias for --confirm-hash"
+    )
     .option("--json", "JSON output")
     .action(async (id, opts) => {
       const mode = modeFromOpts({ json: program.opts().json || opts.json });
       try {
-        await cmdApprove(mode, id, { batch: opts.batch });
+        await cmdApprove(mode, id, {
+          batch: opts.batch,
+          chat: opts.chat,
+          quote: opts.quote,
+          confirmHash: opts.confirmHash,
+          yesHash: opts.yesHash,
+        });
       } catch (error) {
         process.exitCode = emitError(mode, error);
       }

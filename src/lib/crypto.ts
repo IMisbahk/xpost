@@ -174,7 +174,24 @@ export function approvalSignPayload(parts: {
   expiresAt: string;
   kind: string;
   batchId?: string | null;
+  mode?: "tty" | "chat";
+  quote?: string | null;
 }): string {
+  if (parts.mode === "chat") {
+    return JSON.stringify({
+      draftId: parts.draftId,
+      bindingHash: parts.bindingHash,
+      scheduledAtIso: parts.scheduledAtIso,
+      approvedAt: parts.approvedAt,
+      expiresAt: parts.expiresAt,
+      kind: parts.kind,
+      batchId: parts.batchId ?? null,
+      scheme: "ed25519",
+      mode: "chat",
+      quote: parts.quote ?? "",
+    });
+  }
+  // TTY / legacy payload shape must stay stable for existing signatures.
   return JSON.stringify({
     draftId: parts.draftId,
     bindingHash: parts.bindingHash,
@@ -185,6 +202,11 @@ export function approvalSignPayload(parts: {
     batchId: parts.batchId ?? null,
     scheme: "ed25519",
   });
+}
+
+/** HMAC-SHA256 hex digest (available for chat signing alternatives / tests). */
+export function hmacSha256Hex(key: Buffer | string, payload: string): string {
+  return crypto.createHmac("sha256", key).update(payload, "utf8").digest("hex");
 }
 
 export function computeExpiryIso(input: {

@@ -12,12 +12,14 @@ export async function withTempHome<T>(
     XPOST_HOME: process.env.XPOST_HOME,
     XPOST_CONFIG_DIR: process.env.XPOST_CONFIG_DIR,
     XPOST_APPROVER_DIR: process.env.XPOST_APPROVER_DIR,
+    XPOST_APPROVAL_MODES: process.env.XPOST_APPROVAL_MODES,
     CI: process.env.CI,
     XPOST_NONINTERACTIVE: process.env.XPOST_NONINTERACTIVE,
   };
   process.env.XPOST_HOME = home;
   process.env.XPOST_CONFIG_DIR = path.join(home, "config");
   process.env.XPOST_APPROVER_DIR = path.join(home, "approver");
+  delete process.env.XPOST_APPROVAL_MODES;
   delete process.env.CI;
   delete process.env.XPOST_NONINTERACTIVE;
 

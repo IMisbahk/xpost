@@ -30,6 +30,8 @@ export type DraftRecord = {
   batchId?: string;
 };
 
+export type ApprovalMode = "tty" | "chat";
+
 export type ApprovalRecord = {
   draftId: string;
   bindingHash: string;
@@ -40,6 +42,18 @@ export type ApprovalRecord = {
   kind: DraftKind;
   batchId?: string;
   scheme: "ed25519";
+  /** Approval path: interactive passphrase (tty) or chat quote (chat). Defaults to tty for older records. */
+  mode?: ApprovalMode;
+  /** Owner's exact yes message, stored verbatim for chat-mode approvals. */
+  quote?: string;
+};
+
+/** Auto-generated Ed25519 key for chat approvals (no passphrase). Lives under XPOST_HOME. */
+export type ChatApproverStore = {
+  scheme: "ed25519";
+  publicKeySpkiHex: string;
+  privateKeyPkcs8Hex: string;
+  createdAt: string;
 };
 
 export type ApproverStore = {

@@ -110,8 +110,8 @@ export async function cmdDraft(
       ...(batchId ? [`batch: ${batchId}`] : []),
       ...draft.warnings.map((w) => `warning: ${w}`),
       batchId
-        ? `Next: owner runs \`xpost approve --batch ${batchId}\` in an interactive terminal.`
-        : "Next: owner runs `xpost approve " + draft.id + "` in an interactive terminal.",
+        ? `Next: owner TTY \`xpost approve --batch ${batchId}\`, or after an explicit yes: \`xpost approve --chat ${batchId} --quote "..." --confirm-hash ...\`.`
+        : `Next: owner TTY \`xpost approve ${draft.id}\`, or after an explicit yes: \`xpost approve --chat ${draft.id} --quote "..." --confirm-hash ...\`.`,
     ]
   );
 }

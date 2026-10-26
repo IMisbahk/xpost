@@ -36,6 +36,7 @@ export function getPaths() {
     batchesDir: path.join(home, "batches"),
     batchesIndexFile: path.join(home, "batches", "index.json"),
     verifyKeyFile: path.join(home, "verify-key.json"),
+    chatApproverFile: path.join(home, "chat-approver.json"),
     approverDir,
     approverFile: path.join(approverDir, "approver.json"),
     stateFile: path.join(home, "state.json"),
