@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { withTempHome } from "./helpers.js";
+import { dayMs, futureScheduleAt, hourMs, pastScheduleAt, withTempHome } from "./helpers.js";
 import { initApprover, getPrivateKeyForTests, signApproval, loadApprovals, saveApprovals, checkApprovalForDraft } from "../src/lib/approval.js";
 import { createDraft, saveDraft } from "../src/lib/drafts.js";
 import { createBatch, addDraftToBatch, loadBatch, markBatchApproved } from "../src/lib/batches.js";
@@ -14,8 +14,8 @@ describe("batch approval", () => {
       const batch = await createBatch("release-week");
       const d1 = await createDraft({ texts: ["Post one"] });
       const d2 = await createDraft({ texts: ["Post two"] });
-      await addDraftToBatch(batch.id, d1.id, "2026-10-27 20:00 IST");
-      await addDraftToBatch(batch.id, d2.id, "2026-10-28 09:00 IST");
+      await addDraftToBatch(batch.id, d1.id, futureScheduleAt(dayMs));
+      await addDraftToBatch(batch.id, d2.id, futureScheduleAt(dayMs + 13 * hourMs));
       const loaded = await loadBatch(batch.id);
       expect(loaded.members).toHaveLength(2);
       expect(loaded.approved).toBe(false);
@@ -48,7 +48,7 @@ describe("batch approval", () => {
       await initApprover("owner-secret-pass");
       const batch = await createBatch("edit-test");
       const draft = await createDraft({ texts: ["Original"] });
-      await addDraftToBatch(batch.id, draft.id, "2000-01-01 00:00 UTC");
+      await addDraftToBatch(batch.id, draft.id, pastScheduleAt());
       const member = (await loadBatch(batch.id)).members[0];
       const key = await getPrivateKeyForTests("owner-secret-pass");
       const approval = signApproval(key, draft, {
@@ -79,7 +79,9 @@ describe("batch approval", () => {
       await initApprover("owner-secret-pass");
       const draft = await createDraft({ texts: ["Timed"] });
       const { scheduleDraft } = await import("../src/lib/schedule.js");
-      const item = await scheduleDraft(draft.id, "2026-10-27 20:00 IST");
+      const firstAt = futureScheduleAt(dayMs);
+      const laterAt = futureScheduleAt(dayMs + hourMs);
+      const item = await scheduleDraft(draft.id, firstAt);
       const key = await getPrivateKeyForTests("owner-secret-pass");
       const approval = signApproval(key, draft, {
         scheduledAtIso: item.atIso,
@@ -91,7 +93,7 @@ describe("batch approval", () => {
       approvals[draft.id] = approval;
       await saveApprovals(approvals);
 
-      await scheduleDraft(draft.id, "2026-10-27 21:00 IST");
+      await scheduleDraft(draft.id, laterAt);
       const schedule = await getScheduleForDraft(draft.id);
       // scheduleDraft revokes approval on time change
       const afterRevoke = await checkApprovalForDraft(draft, schedule!.atIso);
@@ -105,7 +107,7 @@ describe("batch approval", () => {
       await initApprover("owner-secret-pass");
       const batch = await createBatch("due-batch");
       const draft = await createDraft({ texts: ["Due soon"] });
-      await addDraftToBatch(batch.id, draft.id, "2000-01-01 00:00 UTC");
+      await addDraftToBatch(batch.id, draft.id, pastScheduleAt());
       const member = (await loadBatch(batch.id)).members[0];
       const key = await getPrivateKeyForTests("owner-secret-pass");
       const approvals = await loadApprovals();
@@ -116,7 +118,7 @@ describe("batch approval", () => {
         scheduledApprovalGraceHours: 6,
         scheduledApprovalMaxHours: 36,
       });
-      // Extend expiry into the future for this historical schedule
+      // Extend expiry into the future for this past due schedule
       const signed = approvals[draft.id];
       signed.expiresAt = new Date(Date.now() + 3600_000).toISOString();
       const { approvalSignPayload, ed25519Sign } = await import("../src/lib/crypto.js");
@@ -146,14 +148,14 @@ describe("batch approval", () => {
       await initApprover("owner-secret-pass");
       const batch = await createBatch("mutate");
       const d1 = await createDraft({ texts: ["A"] });
-      await addDraftToBatch(batch.id, d1.id, "2026-10-27 20:00 IST");
+      await addDraftToBatch(batch.id, d1.id, futureScheduleAt(dayMs));
       let loaded = await loadBatch(batch.id);
       await markBatchApproved(loaded);
       loaded = await loadBatch(batch.id);
       expect(loaded.approved).toBe(true);
 
       const d2 = await createDraft({ texts: ["B"] });
-      await addDraftToBatch(batch.id, d2.id, "2026-10-28 20:00 IST");
+      await addDraftToBatch(batch.id, d2.id, futureScheduleAt(2 * dayMs));
       loaded = await loadBatch(batch.id);
       expect(loaded.approved).toBe(false);
       expect(loaded.members).toHaveLength(2);

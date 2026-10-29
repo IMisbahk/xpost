@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { withTempHome } from "./helpers.js";
+import { dayMs, futureScheduleAt, hourMs, withTempHome } from "./helpers.js";
 import {
   approveDraftViaChat,
   approveManyViaChat,
@@ -221,8 +221,8 @@ describe("chat approval", () => {
       const batch = await createBatch("chat-evening");
       const d1 = await createDraft({ texts: ["Batch A"] });
       const d2 = await createDraft({ texts: ["Batch B"] });
-      await addDraftToBatch(batch.id, d1.id, "2026-10-27 20:00 IST");
-      await addDraftToBatch(batch.id, d2.id, "2026-10-27 21:00 IST");
+      await addDraftToBatch(batch.id, d1.id, futureScheduleAt(dayMs));
+      await addDraftToBatch(batch.id, d2.id, futureScheduleAt(dayMs + hourMs));
       const loaded = await loadBatch(batch.id);
       const items = [];
       for (const member of loaded.members) {
