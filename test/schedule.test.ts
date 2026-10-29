@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseScheduleAt } from "../src/lib/timezone.js";
-import { withTempHome } from "./helpers.js";
+import { dayMs, futureScheduleAt, pastScheduleAt, withTempHome } from "./helpers.js";
 import { scheduleDraft, getDueItems, withRunDueLock, unscheduleDraft } from "../src/lib/schedule.js";
 import {
   initApprover,
@@ -14,6 +14,7 @@ import { cmdRunDue } from "../src/commands/scheduleCmd.js";
 
 describe("schedule timezone parsing", () => {
   it("parses IST wall time into UTC", () => {
+    // Fixed calendar inputs exercise parse math, not "must be in the future".
     const parsed = parseScheduleAt("2026-10-27 20:00 IST", "Asia/Calcutta");
     expect(parsed.atIso).toBe("2026-10-27T14:30:00.000Z");
     expect(parsed.timezone).toBe("IST");
@@ -35,7 +36,7 @@ describe("run-due idempotency", () => {
     await withTempHome(async (_home, fake) => {
       await initApprover("owner-secret-pass");
       const draft = await createDraft({ texts: ["Scheduled post"] });
-      const item = await scheduleDraft(draft.id, "2000-01-01 00:00 UTC");
+      const item = await scheduleDraft(draft.id, pastScheduleAt());
       const key = await getPrivateKeyForTests("owner-secret-pass");
       const approval = signApproval(key, draft, {
         scheduledAtIso: item.atIso,
@@ -43,7 +44,7 @@ describe("run-due idempotency", () => {
         scheduledApprovalGraceHours: 6,
         scheduledApprovalMaxHours: 36,
       });
-      // Historical schedule would expire under default cap; re-sign with future expiry
+      // Past schedule would expire under default cap; re-sign with future expiry
       approval.expiresAt = new Date(Date.now() + 3600_000).toISOString();
       const { approvalSignPayload, ed25519Sign } = await import("../src/lib/crypto.js");
       approval.signature = ed25519Sign(
@@ -88,7 +89,7 @@ describe("run-due idempotency", () => {
   it("unschedule removes items", async () => {
     await withTempHome(async () => {
       const draft = await createDraft({ texts: ["Later"] });
-      await scheduleDraft(draft.id, "2099-01-01 00:00 UTC");
+      await scheduleDraft(draft.id, futureScheduleAt(30 * dayMs, "UTC"));
       expect(await unscheduleDraft(draft.id)).toBe(true);
       expect(await unscheduleDraft(draft.id)).toBe(false);
     });

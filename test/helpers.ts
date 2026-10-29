@@ -3,6 +3,31 @@ import os from "node:os";
 import path from "node:path";
 import { setXApiClientOverride } from "../src/xapi/client.js";
 import { FakeXApiClient } from "../src/xapi/fake.js";
+import { formatInTimezone } from "../src/lib/timezone.js";
+
+const hourMs = 3600_000;
+const dayMs = 24 * hourMs;
+
+/**
+ * Schedule wall-clock string relative to now, formatted for --at parsing.
+ * Keeps approval/schedule tests independent of calendar date.
+ */
+export function futureScheduleAt(
+  offsetMs = dayMs,
+  timezone = "IST"
+): string {
+  return formatInTimezone(new Date(Date.now() + offsetMs).toISOString(), timezone);
+}
+
+/** Intentionally past schedule for due/run-due tests. */
+export function pastScheduleAt(
+  offsetMs = dayMs,
+  timezone = "UTC"
+): string {
+  return formatInTimezone(new Date(Date.now() - offsetMs).toISOString(), timezone);
+}
+
+export { hourMs, dayMs };
 
 export async function withTempHome<T>(
   fn: (home: string, fake: FakeXApiClient) => Promise<T>
