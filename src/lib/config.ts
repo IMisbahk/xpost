@@ -16,6 +16,40 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   ownerHandle: "mmisbbahh",
 };
 
+export type EnabledApprovalMode = "tty" | "chat";
+
+/**
+ * XPOST_APPROVAL_MODES: comma-separated list. Default `tty,chat`.
+ * Set to `tty` to disable chat approval.
+ */
+export function getEnabledApprovalModes(): Set<EnabledApprovalMode> {
+  const raw = process.env.XPOST_APPROVAL_MODES ?? "tty,chat";
+  const modes = new Set<EnabledApprovalMode>();
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim().toLowerCase();
+    if (trimmed === "tty" || trimmed === "chat") {
+      modes.add(trimmed);
+    }
+  }
+  if (modes.size === 0) {
+    modes.add("tty");
+  }
+  return modes;
+}
+
+export function isApprovalModeEnabled(mode: EnabledApprovalMode): boolean {
+  return getEnabledApprovalModes().has(mode);
+}
+
+export function assertApprovalModeEnabled(mode: EnabledApprovalMode): void {
+  if (!isApprovalModeEnabled(mode)) {
+    throw new CliError(
+      `Approval mode "${mode}" is disabled. Set XPOST_APPROVAL_MODES to include it (default: tty,chat).`,
+      EXIT.usage
+    );
+  }
+}
+
 export async function loadAppConfig(): Promise<AppConfig> {
   const { appConfigFile, home } = getPaths();
   await ensureDir(home);

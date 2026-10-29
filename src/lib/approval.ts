@@ -14,15 +14,21 @@ import {
 import { getPaths } from "./paths.js";
 import { ensureDir, readJsonFile, writeJsonFile } from "./fsutil.js";
 import type {
+  ApprovalMode,
   ApprovalRecord,
   ApproverStore,
+  ChatApproverStore,
   DraftRecord,
   VerifyKeyStore,
 } from "../types.js";
 import { CliError } from "./output.js";
 import { EXIT } from "../types.js";
 import { assertInteractiveApprovalAllowed, promptHidden } from "./tty.js";
-import { loadAppConfig } from "./config.js";
+import {
+  assertApprovalModeEnabled,
+  isApprovalModeEnabled,
+  loadAppConfig,
+} from "./config.js";
 import { computeDraftBindingHash } from "./drafts.js";
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -165,6 +171,48 @@ export async function saveApprovals(
   await writeJsonFile(approvalsFile, approvals, 0o600);
 }
 
+/**
+ * Load or auto-generate the chat approval Ed25519 key under XPOST_HOME.
+ * No passphrase; used so chat approvals are tamper-evident.
+ */
+export async function loadOrCreateChatApprover(): Promise<{
+  privateKeyPkcs8: Buffer;
+  publicKeySpki: Buffer;
+  store: ChatApproverStore;
+}> {
+  const { chatApproverFile, home } = getPaths();
+  await ensureDir(home, 0o700);
+  const existing = await readJsonFile<ChatApproverStore | null>(
+    chatApproverFile,
+    null
+  );
+  if (
+    existing?.privateKeyPkcs8Hex &&
+    existing?.publicKeySpkiHex &&
+    existing.scheme === "ed25519"
+  ) {
+    return {
+      privateKeyPkcs8: Buffer.from(existing.privateKeyPkcs8Hex, "hex"),
+      publicKeySpki: Buffer.from(existing.publicKeySpkiHex, "hex"),
+      store: existing,
+    };
+  }
+  const { publicKeySpki, privateKeyPkcs8 } = generateEd25519KeyPair();
+  const store: ChatApproverStore = {
+    scheme: "ed25519",
+    publicKeySpkiHex: publicKeySpki.toString("hex"),
+    privateKeyPkcs8Hex: privateKeyPkcs8.toString("hex"),
+    createdAt: new Date().toISOString(),
+  };
+  await writeJsonFile(chatApproverFile, store, 0o600);
+  return { privateKeyPkcs8, publicKeySpki, store };
+}
+
+export async function loadChatPublicKey(): Promise<Buffer> {
+  const { publicKeySpki } = await loadOrCreateChatApprover();
+  return publicKeySpki;
+}
+
 export function signApproval(
   privateKeyPkcs8: Buffer,
   draft: DraftRecord,
@@ -174,8 +222,11 @@ export function signApproval(
     approvalTtlHours: number;
     scheduledApprovalGraceHours: number;
     scheduledApprovalMaxHours: number;
+    mode?: ApprovalMode;
+    quote?: string;
   }
 ): ApprovalRecord {
+  const mode: ApprovalMode = options.mode ?? "tty";
   const approvedAtMs = Date.now();
   const approvedAt = new Date(approvedAtMs).toISOString();
   const expiresAt = computeExpiryIso({
@@ -193,8 +244,10 @@ export function signApproval(
     expiresAt,
     kind: draft.kind,
     batchId: options.batchId ?? null,
+    mode,
+    quote: mode === "chat" ? options.quote ?? "" : null,
   });
-  return {
+  const record: ApprovalRecord = {
     draftId: draft.id,
     bindingHash: draft.bindingHash,
     scheduledAtIso: options.scheduledAtIso,
@@ -204,13 +257,19 @@ export function signApproval(
     kind: draft.kind,
     batchId: options.batchId,
     scheme: "ed25519",
+    mode,
   };
+  if (mode === "chat") {
+    record.quote = options.quote ?? "";
+  }
+  return record;
 }
 
 export function verifyApprovalWithPublicKey(
   approval: ApprovalRecord,
   publicKeySpki: Buffer
 ): boolean {
+  const mode: ApprovalMode = approval.mode ?? "tty";
   const payload = approvalSignPayload({
     draftId: approval.draftId,
     bindingHash: approval.bindingHash,
@@ -219,8 +278,69 @@ export function verifyApprovalWithPublicKey(
     expiresAt: approval.expiresAt,
     kind: approval.kind,
     batchId: approval.batchId ?? null,
+    mode,
+    quote: mode === "chat" ? approval.quote ?? "" : null,
   });
   return ed25519Verify(publicKeySpki, payload, approval.signature);
+}
+
+export type ApprovalPreviewItem = {
+  draftId: string;
+  kind: DraftRecord["kind"];
+  texts: string[];
+  textHash: string;
+  bindingHash: string;
+  media: Array<{ path: string; sha256: string; mimeType: string }>;
+  mediaHash: string;
+  target: DraftRecord["target"];
+  scheduledAtIso: string | null;
+  timezone?: string;
+  deletePostId?: string;
+};
+
+export function buildApprovalPreview(
+  draft: DraftRecord,
+  scheduledAtIso: string | null,
+  timezone?: string
+): ApprovalPreviewItem {
+  return {
+    draftId: draft.id,
+    kind: draft.kind,
+    texts: [...draft.texts],
+    textHash: draft.textHash,
+    bindingHash: draft.bindingHash,
+    media: draft.media.map((m) => ({
+      path: m.path,
+      sha256: m.sha256,
+      mimeType: m.mimeType,
+    })),
+    mediaHash: draft.mediaHash,
+    target: { ...draft.target },
+    scheduledAtIso,
+    timezone,
+    deletePostId: draft.deletePostId,
+  };
+}
+
+export function assertConfirmHashMatches(
+  confirmHash: string | undefined,
+  textHashes: string[]
+): void {
+  if (confirmHash === undefined || confirmHash === "") return;
+  const prefix = confirmHash.trim().toLowerCase();
+  if (prefix.length < 8) {
+    throw new CliError(
+      "Confirm hash must be at least 8 characters of the text sha256.",
+      EXIT.usage
+    );
+  }
+  const ok = textHashes.some((hash) => hash.toLowerCase().startsWith(prefix));
+  if (!ok) {
+    throw new CliError(
+      "Confirm hash does not match any text sha256 being approved. Show the owner the exact text and hash first.",
+      EXIT.hashMismatch
+    );
+  }
 }
 
 /** @deprecated use unlock + signApproval; kept for tests that need a private key helper */
@@ -276,6 +396,7 @@ export async function approveDraftInteractive(
   draft: DraftRecord,
   options?: { scheduledAtIso?: string | null; batchId?: string; timezone?: string }
 ): Promise<ApprovalRecord> {
+  assertApprovalModeEnabled("tty");
   assertInteractiveApprovalAllowed();
   const config = await loadAppConfig();
   const scheduledAtIso = options?.scheduledAtIso ?? null;
@@ -292,6 +413,7 @@ export async function approveDraftInteractive(
     approvalTtlHours: config.approvalTtlHours,
     scheduledApprovalGraceHours: config.scheduledApprovalGraceHours,
     scheduledApprovalMaxHours: config.scheduledApprovalMaxHours,
+    mode: "tty",
   });
   const approvals = await loadApprovals();
   approvals[draft.id] = approval;
@@ -307,6 +429,7 @@ export async function approveManyInteractive(
     batchId?: string;
   }>
 ): Promise<ApprovalRecord[]> {
+  assertApprovalModeEnabled("tty");
   assertInteractiveApprovalAllowed();
   const config = await loadAppConfig();
 
@@ -330,12 +453,128 @@ export async function approveManyInteractive(
       approvalTtlHours: config.approvalTtlHours,
       scheduledApprovalGraceHours: config.scheduledApprovalGraceHours,
       scheduledApprovalMaxHours: config.scheduledApprovalMaxHours,
+      mode: "tty",
     });
     approvals[item.draft.id] = approval;
     created.push(approval);
   }
   await saveApprovals(approvals);
   return created;
+}
+
+/**
+ * Non-interactive chat approval: binds the owner's exact yes quote into a
+ * signed record. No TTY or passphrase required. Relies on the assistant only
+ * running this after the owner explicitly said yes to the exact text shown.
+ */
+export async function approveDraftViaChat(
+  draft: DraftRecord,
+  options: {
+    quote: string;
+    scheduledAtIso: string | null;
+    batchId?: string;
+    timezone?: string;
+    confirmHash?: string;
+    printPreview?: boolean;
+  }
+): Promise<{ approval: ApprovalRecord; preview: ApprovalPreviewItem }> {
+  assertApprovalModeEnabled("chat");
+  const quote = options.quote;
+  if (typeof quote !== "string" || quote.trim().length === 0) {
+    throw new CliError(
+      "Chat approval requires a non-empty --quote with the owner's exact yes message.",
+      EXIT.usage
+    );
+  }
+
+  const scheduledAtIso = options.scheduledAtIso ?? null;
+  const preview = buildApprovalPreview(draft, scheduledAtIso, options.timezone);
+  assertConfirmHashMatches(options.confirmHash, [draft.textHash]);
+
+  if (options.printPreview !== false) {
+    process.stdout.write("\n=== xpost chat approval (preview) ===\n");
+    printDraftForApproval(draft, scheduledAtIso, options.timezone);
+    process.stdout.write(`Quote (verbatim): ${quote}\n`);
+  }
+
+  const config = await loadAppConfig();
+  const { privateKeyPkcs8 } = await loadOrCreateChatApprover();
+  const approval = signApproval(privateKeyPkcs8, draft, {
+    scheduledAtIso,
+    batchId: options.batchId,
+    approvalTtlHours: config.approvalTtlHours,
+    scheduledApprovalGraceHours: config.scheduledApprovalGraceHours,
+    scheduledApprovalMaxHours: config.scheduledApprovalMaxHours,
+    mode: "chat",
+    quote,
+  });
+  const approvals = await loadApprovals();
+  approvals[draft.id] = approval;
+  await saveApprovals(approvals);
+  return { approval, preview };
+}
+
+export async function approveManyViaChat(
+  items: Array<{
+    draft: DraftRecord;
+    scheduledAtIso: string | null;
+    timezone?: string;
+    batchId?: string;
+  }>,
+  options: {
+    quote: string;
+    confirmHash?: string;
+    printPreview?: boolean;
+  }
+): Promise<{ approvals: ApprovalRecord[]; previews: ApprovalPreviewItem[] }> {
+  assertApprovalModeEnabled("chat");
+  const quote = options.quote;
+  if (typeof quote !== "string" || quote.trim().length === 0) {
+    throw new CliError(
+      "Chat approval requires a non-empty --quote with the owner's exact yes message.",
+      EXIT.usage
+    );
+  }
+  if (items.length === 0) {
+    throw new CliError("Nothing to approve.", EXIT.usage);
+  }
+
+  const previews = items.map((item) =>
+    buildApprovalPreview(item.draft, item.scheduledAtIso, item.timezone)
+  );
+  assertConfirmHashMatches(
+    options.confirmHash,
+    previews.map((p) => p.textHash)
+  );
+
+  if (options.printPreview !== false) {
+    process.stdout.write("\n=== xpost chat batch approval (preview) ===\n");
+    process.stdout.write(`Posts in this approval: ${items.length}\n`);
+    for (const item of items) {
+      printDraftForApproval(item.draft, item.scheduledAtIso, item.timezone);
+    }
+    process.stdout.write(`Quote (verbatim): ${quote}\n`);
+  }
+
+  const config = await loadAppConfig();
+  const { privateKeyPkcs8 } = await loadOrCreateChatApprover();
+  const approvalsStore = await loadApprovals();
+  const created: ApprovalRecord[] = [];
+  for (const item of items) {
+    const approval = signApproval(privateKeyPkcs8, item.draft, {
+      scheduledAtIso: item.scheduledAtIso,
+      batchId: item.batchId,
+      approvalTtlHours: config.approvalTtlHours,
+      scheduledApprovalGraceHours: config.scheduledApprovalGraceHours,
+      scheduledApprovalMaxHours: config.scheduledApprovalMaxHours,
+      mode: "chat",
+      quote,
+    });
+    approvalsStore[item.draft.id] = approval;
+    created.push(approval);
+  }
+  await saveApprovals(approvalsStore);
+  return { approvals: created, previews };
 }
 
 export type ApprovalCheckResult =
@@ -350,6 +589,25 @@ export async function checkApprovalForDraft(
   const approval = approvals[draft.id];
   if (!approval) {
     return { ok: false, reason: "Draft is not approved.", exitCode: EXIT.notApproved };
+  }
+
+  const mode: ApprovalMode = approval.mode ?? "tty";
+  if (!isApprovalModeEnabled(mode)) {
+    return {
+      ok: false,
+      reason: `Approval mode "${mode}" is disabled via XPOST_APPROVAL_MODES.`,
+      exitCode: EXIT.auth,
+    };
+  }
+
+  if (mode === "chat") {
+    if (typeof approval.quote !== "string" || approval.quote.trim().length === 0) {
+      return {
+        ok: false,
+        reason: "Chat approval is missing the owner's quote.",
+        exitCode: EXIT.forged,
+      };
+    }
   }
 
   const liveBinding = computeDraftBindingHash(draft);
@@ -380,7 +638,10 @@ export async function checkApprovalForDraft(
   }
 
   try {
-    const publicKey = await loadVerifyPublicKey();
+    const publicKey =
+      mode === "chat"
+        ? await loadChatPublicKey()
+        : await loadVerifyPublicKey();
     if (!verifyApprovalWithPublicKey(approval, publicKey)) {
       return {
         ok: false,
